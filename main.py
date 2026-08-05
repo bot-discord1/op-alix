@@ -4,7 +4,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# جلب التوكن من الـ Environment الخاص باللوحة
 TOKEN = os.getenv("DISCORD_TOKEN")
 if TOKEN:
     TOKEN = TOKEN.strip().strip('"').strip("'")
@@ -67,4 +66,5 @@ async def announce_error(interaction: discord.Interaction, error: app_commands.A
 if not TOKEN:
     print("❌ خطأ: التوكن غير موجود في متغيرات البيئة للوحة!")
 else:
+    # هنا تم تغيير الكلمة القديمة نهائياً بمتغير TOKEN الصافي
     bot.run(TOKEN)

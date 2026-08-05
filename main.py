@@ -3,15 +3,12 @@ import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
-from dotenv import load_dotenv
 
-# قراءة معلومات ملف .env
-load_dotenv()
+# قراءة التوكن مباشرة من الـ Environment Variables اللي السيت أو الـ Dashboard كيعمرها في السيرفر
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-# إعداد الصلاحيات
 intents = discord.Intents.default()
-intents.members = True  # ضروري جداً لقراءة أعضاء السيرفر
+intents.members = True
 
 class AnnounceBot(commands.Bot):
     def __init__(self):
@@ -65,8 +62,8 @@ async def announce_error(interaction: discord.Interaction, error: app_commands.A
     else:
         await interaction.response.send_message(msg, ephemeral=True)
 
-# تشغيل البوت باستخدام التوكن المستخرج من البيئة أو السيت
+# تشغيل البوت بالتوكن اللي جاي من السيرفر / السيت
 if not TOKEN:
-    print("❌ خطأ: لم يتم العثور على التوكن في ملف .env!")
+    print("❌ خطأ: لم يتم العثور على التوكن في نظام السيرفر. تأكد أن الـ Dashboard قام بتمريره!")
 else:
     bot.run(TOKEN)

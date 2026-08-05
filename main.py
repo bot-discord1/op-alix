@@ -4,14 +4,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# استقبال التوكن مباشرة من الـ Environment Variables (التي يرسلها السيت / الـ Dashboard)
+# جلب التوكن من الـ Environment الخاص باللوحة
 TOKEN = os.getenv("DISCORD_TOKEN")
+if TOKEN:
+    TOKEN = TOKEN.strip().strip('"').strip("'")
 
-if not TOKEN or TOKEN.strip() == "":
-    print("❌ خطأ حرج: لم يتم استقبال أي توكن من اللوحة (Dashboard). تأكد من إعدادات المتغيرات في السيرفر!")
-    exit(1)
-
-# إعداد الصلاحيات
 intents = discord.Intents.default()
 intents.members = True
 
@@ -67,5 +64,7 @@ async def announce_error(interaction: discord.Interaction, error: app_commands.A
     else:
         await interaction.response.send_message(msg, ephemeral=True)
 
-# تشغيل البوت بالتوكن المستلم
-bot.run(TOKEN)
+if not TOKEN:
+    print("❌ خطأ: التوكن غير موجود في متغيرات البيئة للوحة!")
+else:
+    bot.run(TOKEN)

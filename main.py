@@ -1,4 +1,5 @@
 import os
+import asyncio
 import discord
 from discord.ext import commands
 
@@ -10,23 +11,32 @@ intents.message_content = True  # ضروري باش يقرأ علامة التع
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# حط هنا الأيدي (ID) ديال الروم الصوتي اللي بغيت البوت يدخل ليه أول ما يخدم
-VOICE_CHANNEL_ID = 1444796667340656680 
-
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user.name}")
     
-    # محاولة دخول البوت للروم الصوتي أوتوماتيكياً
+    # البحث أوتوماتيكياً عن السيرفر والروم الصوتية ودخل ليها
     for guild in bot.guilds:
-        voice_channel = guild.get_channel(VOICE_CHANNEL_ID)
-        if voice_channel and isinstance(voice_channel, discord.VoiceChannel):
-            try:
-                if not guild.voice_client:
-                    await voice_channel.connect()
-                    print(f"🔊 دخل البوت أوتوماتيكياً إلى الروم: {voice_channel.name}")
-            except Exception as e:
-                print(f"❌ ماقدرش البوت يدخل للروم الصوتي: {e}")
+        if guild.name == "🧿One Tap | City Life Roleplay V3":
+            print(f"🔍 تم العثور على السيرفر: {guild.name}")
+            
+            # البحث عن روم صوتية اسمها "3" أو تبدأ بـ "3"
+            target_voice_channel = None
+            for channel in guild.voice_channels:
+                if channel.name == "3" or channel.name.startswith("3 "):
+                    target_voice_channel = channel
+                    break
+            
+            if target_voice_channel:
+                try:
+                    if not guild.voice_client:
+                        await target_voice_channel.connect()
+                        print(f"🔊 دخل البوت بنجاح إلى الروم الصوتي: {target_voice_channel.name}")
+                except Exception as e:
+                    print(f"❌ لم يستطع البوت الدخول للروم الصوتي: {e}")
+            else:
+                print("❌ لم يتم العثور على روم صوتية تحمل الاسم '3' في هذا السيرفر!")
+            break
 
 # ==================== CHAT COMMANDS ====================
 

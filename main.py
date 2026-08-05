@@ -1,48 +1,80 @@
 import os
 import discord
 from discord.ext import commands
-from discord import app_commands, Interaction
 
 # ==================== BOT CONFIGURATION ====================
 intents = discord.Intents.default()
 intents.guilds = True
 intents.voice_states = True
+intents.message_content = True  # ضروري باش يقرأ علامة التعجب !
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# حط هنا الأيدي (ID) ديال الروم الصوتي اللي بغيت البوت يدخل ليه أول ما يخدم
+VOICE_CHANNEL_ID = 1444796667340656680 
 
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user.name}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"🔄 Synced {len(synced)} slash commands.")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
+    
+    # محاولة دخول البوت للروم الصوتي أوتوماتيكياً
+    for guild in bot.guilds:
+        voice_channel = guild.get_channel(VOICE_CHANNEL_ID)
+        if voice_channel and isinstance(voice_channel, discord.VoiceChannel):
+            try:
+                if not guild.voice_client:
+                    await voice_channel.connect()
+                    print(f"🔊 دخل البوت أوتوماتيكياً إلى الروم: {voice_channel.name}")
+            except Exception as e:
+                print(f"❌ ماقدرش البوت يدخل للروم الصوتي: {e}")
 
-# ==================== VOICE ROOM COMMANDS ====================
+# ==================== CHAT COMMANDS ====================
 
-@bot.tree.command(name="joinvoice", description="دخول البوت إلى الروم الصوتي الذي تتواجد فيه")
-async def joinvoice(interaction: discord.Interaction):
-    if not interaction.user.voice:
-        await interaction.response.send_message("❌ يجب عليك أن تكون داخل روم صوتي أولاً لكي يستطيع البوت دخوله!", ephemeral=True)
+# 1. أمر قفل الروم (!lock)
+@bot.command(name="lock")
+@commands.has_permissions(manage_channels=True)
+async def lock_channel(ctx):
+    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
+    await ctx.send("🔒 تم قفل هذه الروم بنجاح!")
+
+@lock_channel.error
+async def lock_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ ماعندكش صلاحيات لإستخدام هذا الأمر!")
+
+# 2. أمر فتح الروم (!unlock)
+@bot.command(name="unlock")
+@commands.has_permissions(manage_channels=True)
+async def unlock_channel(ctx):
+    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=True)
+    await ctx.send("🔓 تم فتح هذه الروم بنجاح!")
+
+@unlock_channel.error
+async def unlock_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ ماعندكش صلاحيات لإستخدام هذا الأمر!")
+
+# 3. أمر مسح الرسائل (!delet <عدد>)
+@bot.command(name="delet")
+@commands.has_permissions(manage_messages=True)
+async def delete_messages(ctx, amount: int = 5):
+    if amount <= 0:
+        await ctx.send("❌ حدد عدد صحيح أكبر من 0 للمسح!", delete_after=5)
         return
     
-    voice_channel = interaction.user.voice.channel
-    
-    if interaction.guild.voice_client:
-        await interaction.guild.voice_client.move_to(voice_channel)
-        await interaction.response.send_message(f"✅ تم نقل البوت إلى الروم الصوتي: **{voice_channel.name}**")
-    else:
-        await voice_channel.connect()
-        await interaction.response.send_message(f"✅ دخل البوت إلى الروم الصوتي بنجاح: **{voice_channel.name}** 🎧")
+    await ctx.message.delete()
+    deleted = await ctx.channel.purge(limit=amount)
+    msg = await ctx.send(f"🗑️ تم مسح `{len(deleted)}` رسالة بنجاح.")
+    await asyncio.sleep(4)
+    try:
+        await msg.delete()
+    except:
+        pass
 
-@bot.tree.command(name="leavevoice", description="خروج البوت من الروم الصوتي")
-async def leavevoice(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
-        await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("🛑 خرج البوت من الروم الصوتي بنجاح.")
-    else:
-        await interaction.response.send_message("❌ البوت ليس متصلاً بأي روم صوتي حالياً!", ephemeral=True)
+@delete_messages.error
+async def delete_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ ماعندكش صلاحيات لمسح الرسائل!")
 
 # ==================== RUN BOT ====================
 TOKEN = os.getenv("DISCORD_TOKEN")

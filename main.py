@@ -1,273 +1,166 @@
-import asyncio
 import os
+import asyncio
 import discord
-from discord import app_commands
 from discord.ext import commands
+from discord import app_commands
+import yt_dlp
 
-# ==================== ⚙️ BOT INITIALIZATION ====================
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.guilds = True
-intents.members = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Configuration dial yt-dlp & FFmpeg
+YTDL_OPTIONS = {
+    'format': 'bestaudio/best',
+    'extractaudio': True,
+    'audioformat': 'mp3',
+    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'restrictfilenames': True,
+    'noplaylist': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0',
+}
+
+FFMPEG_OPTIONS = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn',
+}
+
+ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+
+# Queue dial l-musique l-koll server
+music_queues = {}
+
+class YTDLSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, data, volume=0.5):
+        super().__init__(source, volume)
+        self.data = data
+        self.title = data.get('title')
+        self.url = data.get('url')
+
+    @classmethod
+    async def from_url(cls, url, *, loop=None, stream=True):
+        loop = loop or asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+
+        if 'entries' in data:
+            data = data['entries'][0]
+
+        filename = data['url'] if stream else ytdl.prepare_filename(data)
+        return cls(discord.FFmpegPCMAudio(filename, **FFMPEG_OPTIONS), data=data)
+
+
+def play_next(interaction: discord.Interaction):
+    guild_id = interaction.guild_id
+    if guild_id in music_queues and len(music_queues[guild_id]) > 0:
+        next_track = music_queues[guild_id].pop(0)
+        vc = interaction.guild.voice_client
+
+        if vc and vc.is_connected():
+            coro = YTDLSource.from_url(next_track['url'], loop=bot.loop, stream=True)
+            fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
+            try:
+                player = fut.result()
+                vc.play(player, after=lambda e: play_next(interaction))
+                asyncio.run_coroutine_threadsafe(
+                    interaction.channel.send(f"🎶 **Daba kay-l3b:** `{player.title}`"),
+                    bot.loop
+                )
+            except Exception as e:
+                print(f"Error playing next: {e}")
+
+
+# --- Slash Commands ---
+
+@bot.tree.command(name="play", description="L3b shi song aw search b smiya")
+async def play(interaction: discord.Interaction, query: str):
+    if not interaction.user.voice:
+        await interaction.response.send_message("❌ Khassk t-koun dakhil l-Voice Channel bda3!", ephemeral=True)
+        return
+
+    await interaction.response.defer()
+
+    voice_channel = interaction.user.voice.channel
+    vc = interaction.guild.voice_client
+
+    if not vc:
+        vc = await voice_channel.connect()
+    elif vc.channel != voice_channel:
+        await vc.move_to(voice_channel)
+
+    guild_id = interaction.guild_id
+    if guild_id not in music_queues:
+        music_queues[guild_id] = []
+
+    if vc.is_playing() or vc.is_paused():
+        music_queues[guild_id].append({'url': query})
+        await interaction.followup.send(f"➕ **Zdnaha f-L-Queue:** `{query}`")
+    else:
+        try:
+            player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
+            vc.play(player, after=lambda e: play_next(interaction))
+            await interaction.followup.send(f"🎶 **Daba kay-l3b:** `{player.title}`")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ma-qdrch i-l3b l-song: {e}")
+
+
+@bot.tree.command(name="pause", description="Wqqf l-musique")
+async def pause(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc and vc.is_playing():
+        vc.pause()
+        await interaction.response.send_message("⏸️ **Musique t-wqqfat.**")
+    else:
+        await interaction.response.send_message("❌ Ta 7aja ma kat-l3b daba.", ephemeral=True)
+
+
+@bot.tree.command(name="resume", description="Kmmel l-musique")
+async def resume(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc and vc.is_paused():
+        vc.resume()
+        await interaction.response.send_message("▶️ **Musique kmmlat.**")
+    else:
+        await interaction.response.send_message("❌ Musique ma-m-wqqfach.", ephemeral=True)
+
+
+@bot.tree.command(name="skip", description="Douz l-song l-jayi")
+async def skip(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc and (vc.is_playing() or vc.is_paused()):
+        vc.stop()
+        await interaction.response.send_message("⏭️ **Dazt l-song l-jayi.**")
+    else:
+        await interaction.response.send_message("❌ Ta 7aja ma kat-l3b.", ephemeral=True)
+
+
+@bot.tree.command(name="stop", description="Wqqf l-musique w khoroj m-l-voice")
+async def stop(interaction: discord.Interaction):
+    guild_id = interaction.guild_id
+    if guild_id in music_queues:
+        music_queues[guild_id].clear()
+
+    vc = interaction.guild.voice_client
+    if vc:
+        await vc.disconnect()
+        await interaction.response.send_message("🛑 **Wqqft l-bot w khrajt m-l-voice.**")
+    else:
+        await interaction.response.send_message("❌ L-bot ma-dakhilsh l-Voice.", ephemeral=True)
 
 
 @bot.event
 async def on_ready():
-  print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
-  print("Advanced Ticket Bot is ready!")
-  try:
-    synced = await bot.tree.sync()
-    print(f"Synced {len(synced)} slash commands.")
-  except Exception as e:
-    print(f"Failed to sync commands: {e}")
+    await bot.tree.sync()
+    print(f"🔥 Music Bot Ready as: {bot.user}")
 
-
-# ==================== 🎫 TICKET SYSTEM ====================
-
-
-class TicketReasonModal(discord.ui.Modal, title="سبب إغلاق التذكرة"):
-  reason_input = discord.ui.TextInput(
-      label="السبب",
-      style=discord.TextStyle.paragraph,
-      placeholder="اكتب سبب إغلاق التذكرة هنا...",
-      required=True,
-      max_length=300,
-  )
-
-  async def on_submit(self, interaction: discord.Interaction):
-    reason = self.reason_input.value
-    channel = interaction.channel
-    closed_by = interaction.user
-
-    # محاولة إيجاد صاحب التذكرة من اسم الروم أو أصحاب الروم
-    ticket_owner = None
-    for member, overwrite in channel.overwrites.items():
-      if (
-          isinstance(member, discord.Member)
-          and not member.bot
-          and overwrite.read_messages
-      ):
-        ticket_owner = member
-        break
-
-    await interaction.response.send_message(
-        f"🔒 سيتم إغلاق التذكرة بواسطة {closed_by.mention}\n**السبب:** {reason}\nسيتم"
-        " حذف القناة خلال 3 ثوانٍ..."
-    )
-
-    # إرسال رسالة خاصة لصاحب التذكرة
-    if ticket_owner:
-      try:
-        embed_dm = discord.Embed(
-            title="🎫 تم إغلاق تذكرتك",
-            description=f"مرحباً، تم إغلاق تذكرتك في سيرفر **{interaction.guild.name}**.",
-            color=discord.Color.red(),
-        )
-        embed_dm.add_field(
-            name="اسم التذكرة", value=channel.name, inline=False
-        )
-        embed_dm.add_field(name="من طرف", value=closed_by.mention, inline=False)
-        embed_dm.add_field(name="السبب", value=reason, inline=False)
-        await ticket_owner.send(embed=embed_dm)
-      except Exception:
-        pass
-
-    await asyncio.sleep(3)
-    try:
-      await channel.delete()
-    except Exception:
-      pass
-
-
-class TicketCloseView(discord.ui.View):
-
-  def __init__(self):
-    super().__init__(timeout=None)
-
-  @discord.ui.button(
-      label="🔒 إغلاق التذكرة",
-      style=discord.ButtonStyle.red,
-      custom_id="close_ticket_modal",
-  )
-  async def close_ticket(
-      self, interaction: discord.Interaction, button: discord.ui.Button
-  ):
-    # فتح نافذة كتابة السبب
-    await interaction.response.send_modal(TicketReasonModal())
-
-
-class TicketView(discord.ui.View):
-
-  def __init__(self):
-    super().__init__(timeout=None)
-
-  @discord.ui.button(
-      label="🎫 فتح تذكرة جديدة",
-      style=discord.ButtonStyle.green,
-      custom_id="open_ticket",
-  )
-  async def open_ticket(
-      self, interaction: discord.Interaction, button: discord.ui.Button
-  ):
-    guild = interaction.guild
-    user = interaction.user
-
-    existing_channel = discord.utils.get(
-        guild.text_channels, name=f"ticket-{user.name.lower()}"
-    )
-    if existing_channel:
-      await interaction.response.send_message(
-          f"❌ لديك تذكرة مفتوحة بالفعل: {existing_channel.mention}",
-          ephemeral=True,
-      )
-      return
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        user: discord.PermissionOverwrite(
-            read_messages=True, send_messages=True, attach_files=True
-        ),
-        guild.me: discord.PermissionOverwrite(
-            read_messages=True, send_messages=True, manage_channels=True
-        ),
-    }
-
-    ticket_channel = await guild.create_text_channel(
-        name=f"ticket-{user.name}", overwrites=overwrites
-    )
-
-    embed = discord.Embed(
-        title="🎫 تذكرة دعم فني جديدة",
-        description=(
-            f"مرحباً بك {user.mention}!\nيرجى كتابة مشكلتك أو طلبك بالتفصيل"
-            " وسيقوم طاقم الإدارة بالرد عليك قريباً."
-        ),
-        color=discord.Color.blue(),
-    )
-    embed.set_footer(text="City Life Support System")
-
-    await ticket_channel.send(embed=embed, view=TicketCloseView())
-    await interaction.response.send_message(
-        f"✅ تم فتح تذكرتك بنجاح في: {ticket_channel.mention}", ephemeral=True
-    )
-
-
-@bot.tree.command(
-    name="setupticket", description="إرسال لوحة التذاكر في القناة الحالية"
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def setupticket(interaction: discord.Interaction):
-  embed = discord.Embed(
-      title="🎫 مركز المساعدة والدعم الفني",
-      description=(
-          "هل تحتاج إلى مساعدة، لديك استفسار أو مشكلة؟\nاضغط على الزر أدناه لفتح"
-          " تذكرة خاصة."
-      ),
-      color=discord.Color.dark_theme(),
-  )
-  embed.set_footer(text="City Life Roleplay")
-
-  await interaction.channel.send(embed=embed, view=TicketView())
-  await interaction.response.send_message(
-      "✅ تم إرسال لوحة التذاكر بنجاح!", ephemeral=True
-  )
-
-
-# ==================== ✏️ COMMAND /rename ====================
-
-
-@bot.tree.command(name="rename", description="تغيير اسم روم التذكرة الحالية")
-@app_commands.checks.has_permissions(manage_channels=True)
-async def rename(interaction: discord.Interaction, new_name: str):
-  if not interaction.channel.name.startswith("ticket-"):
-    await interaction.response.send_message(
-        "❌ هذا الأمر مخصص لقنوات التذاكر فقط!", ephemeral=True
-    )
-    return
-
-  await interaction.channel.rename(name=new_name)
-  await interaction.response.send_message(
-      f"✅ تم تغيير اسم التذكرة بنجاح إلى: **{new_name}**", ephemeral=True
-  )
-
-
-# ==================== 🚨 COMMAND /support (Admin DM) ====================
-
-
-@bot.tree.command(
-    name="support",
-    description=(
-        "إرسال تنبيه في رسالة خاصة لجميع المسؤولين (Admins) في السيرفر"
-    ),
-)
-async def support(interaction: discord.Interaction, *, reason: str):
-  await interaction.response.send_message(
-      "🔄 جاري إرسال طلب المساعدة إلى جميع المسؤولين...", ephemeral=True
-  )
-
-  guild = interaction.guild
-  count = 0
-
-  embed = discord.Embed(
-      title="🚨 طلب مساعدة عاجل (Support Alert)",
-      description=(
-          f"طلب دعم جديد من العضو {interaction.user.mention} في سيرفر"
-          f" **{guild.name}**"
-      ),
-      color=discord.Color.gold(),
-  )
-  embed.add_field(name="السبب / التفاصيل", value=reason, inline=False)
-  embed.set_footer(text=f"ID: {interaction.user.id}")
-
-  for member in guild.members:
-    if member.guild_permissions.administrator and not member.bot:
-      try:
-        await member.send(embed=embed)
-        count += 1
-      except Exception:
-        pass
-
-  await interaction.followup.send(
-      f"✅ تم إرسال رسالة الدعم بنجاح إلى ({count}) مسؤول في السيرفر في الخاص"
-      " (DM).",
-      ephemeral=True,
-  )
-
-
-# ==================== 📢 COMMANDS /ann & /text ====================
-
-
-@bot.tree.command(name="ann", description="إرسال إعلان رسمي بـ Embed")
-@app_commands.checks.has_permissions(administrator=True)
-async def ann(interaction: discord.Interaction, *, message: str):
-  embed = discord.Embed(
-      title="📢 إعلان رسمي / Announcement",
-      description=message,
-      color=discord.Color.blue(),
-  )
-  embed.set_footer(
-      text=f"بواسطة: {interaction.user.name}",
-      icon_url=interaction.user.display_avatar.url,
-  )
-
-  await interaction.channel.send(embed=embed)
-  await interaction.response.send_message(
-      "✅ تم إرسال الإعلان بنجاح!", ephemeral=True
-  )
-
-
-@bot.tree.command(
-    name="text", description="جعل البوت يكتب أي نص تريده في القناة"
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def text(interaction: discord.Interaction, *, content: str):
-  await interaction.channel.send(content)
-  await interaction.response.send_message(
-      "✅ تم نشر النص بنجاح!", ephemeral=True
-  )
-
-
-bot.run(os.getenv("DISCORD_TOKEN"))
+if __name__ == "__main__":
+    if not DISCORD_TOKEN:
+        raise ValueError("❌ DISCORD_TOKEN is missing!")
+    bot.run(DISCORD_TOKEN)

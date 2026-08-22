@@ -1,4 +1,16 @@
 import os
+import sys
+import subprocess
+
+# Auto-install missing packages
+REQUIRED_PACKages = ["discord.py", "yt-dlp", "PyNaCl"]
+for package in REQUIRED_PACKages:
+    try:
+        __import__(package.replace("-", "_").split(".")[0])
+    except ImportError:
+        print(f"📦 Installing {package}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
 import asyncio
 import discord
 from discord.ext import commands
@@ -11,7 +23,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Configuration dial yt-dlp & FFmpeg
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'extractaudio': True,
@@ -34,8 +45,6 @@ FFMPEG_OPTIONS = {
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
-
-# Queue dial l-musique l-koll server
 music_queues = {}
 
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -49,20 +58,16 @@ class YTDLSource(discord.PCMVolumeTransformer):
     async def from_url(cls, url, *, loop=None, stream=True):
         loop = loop or asyncio.get_event_loop()
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-
         if 'entries' in data:
             data = data['entries'][0]
-
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         return cls(discord.FFmpegPCMAudio(filename, **FFMPEG_OPTIONS), data=data)
-
 
 def play_next(interaction: discord.Interaction):
     guild_id = interaction.guild_id
     if guild_id in music_queues and len(music_queues[guild_id]) > 0:
         next_track = music_queues[guild_id].pop(0)
         vc = interaction.guild.voice_client
-
         if vc and vc.is_connected():
             coro = YTDLSource.from_url(next_track['url'], loop=bot.loop, stream=True)
             fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
@@ -76,17 +81,13 @@ def play_next(interaction: discord.Interaction):
             except Exception as e:
                 print(f"Error playing next: {e}")
 
-
-# --- Slash Commands ---
-
-@bot.tree.command(name="play", description="L3b shi song aw search b smiya")
+@bot.tree.command(name="play", description="L3b song aw search b smiya")
 async def play(interaction: discord.Interaction, query: str):
     if not interaction.user.voice:
-        await interaction.response.send_message("❌ Khassk t-koun dakhil l-Voice Channel bda3!", ephemeral=True)
+        await interaction.response.send_message("❌ Khassk t-koun dakhil l-Voice Channel!", ephemeral=True)
         return
 
     await interaction.response.defer()
-
     voice_channel = interaction.user.voice.channel
     vc = interaction.guild.voice_client
 
@@ -101,15 +102,14 @@ async def play(interaction: discord.Interaction, query: str):
 
     if vc.is_playing() or vc.is_paused():
         music_queues[guild_id].append({'url': query})
-        await interaction.followup.send(f"➕ **Zdnaha f-L-Queue:** `{query}`")
+        await interaction.followup.send(f"➕ **Zdnaha f-Queue:** `{query}`")
     else:
         try:
             player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
             vc.play(player, after=lambda e: play_next(interaction))
             await interaction.followup.send(f"🎶 **Daba kay-l3b:** `{player.title}`")
         except Exception as e:
-            await interaction.followup.send(f"❌ Ma-qdrch i-l3b l-song: {e}")
-
+            await interaction.followup.send(f"❌ Erreur f play: {e}")
 
 @bot.tree.command(name="pause", description="Wqqf l-musique")
 async def pause(interaction: discord.Interaction):
@@ -118,8 +118,7 @@ async def pause(interaction: discord.Interaction):
         vc.pause()
         await interaction.response.send_message("⏸️ **Musique t-wqqfat.**")
     else:
-        await interaction.response.send_message("❌ Ta 7aja ma kat-l3b daba.", ephemeral=True)
-
+        await interaction.response.send_message("❌ Ta 7aja ma kat-l3b.", ephemeral=True)
 
 @bot.tree.command(name="resume", description="Kmmel l-musique")
 async def resume(interaction: discord.Interaction):
@@ -130,7 +129,6 @@ async def resume(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ Musique ma-m-wqqfach.", ephemeral=True)
 
-
 @bot.tree.command(name="skip", description="Douz l-song l-jayi")
 async def skip(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
@@ -140,20 +138,17 @@ async def skip(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ Ta 7aja ma kat-l3b.", ephemeral=True)
 
-
-@bot.tree.command(name="stop", description="Wqqf l-musique w khoroj m-l-voice")
+@bot.tree.command(name="stop", description="Wqqf l-bot w khoroj")
 async def stop(interaction: discord.Interaction):
     guild_id = interaction.guild_id
     if guild_id in music_queues:
         music_queues[guild_id].clear()
-
     vc = interaction.guild.voice_client
     if vc:
         await vc.disconnect()
-        await interaction.response.send_message("🛑 **Wqqft l-bot w khrajt m-l-voice.**")
+        await interaction.response.send_message("🛑 **Wqqft l-bot w khrajt.**")
     else:
         await interaction.response.send_message("❌ L-bot ma-dakhilsh l-Voice.", ephemeral=True)
-
 
 @bot.event
 async def on_ready():
